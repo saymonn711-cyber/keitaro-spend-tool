@@ -184,6 +184,7 @@ HTML = r"""<!DOCTYPE html>
         <tr>
           <th>ID Keitaro</th>
           <th>Название кампании</th>
+          <th style="text-align:center">Комиссия</th>
           <th style="text-align:center">Строк</th>
           <th style="text-align:right">Спенд USD</th>
         </tr>
@@ -321,17 +322,20 @@ function parseCSV(text) {
     let id = null;
 
     // Формат 1: PfWwFFWF/5 | NL PP Cross ...
+    let commission = 0;
     const pipe = rawName.indexOf('|');
     if (pipe !== -1) {
       let rawId = rawName.substring(0, pipe).trim();
+      const commMatch = rawId.match(/\/([0-9]+)$/);
+      if (commMatch) commission = parseFloat(commMatch[1]) || 0;
       rawId = rawId.replace(/\/\d+$/, '').trim();
       if (rawId) id = rawId;
     }
 
     // Формат 2: c2njpmMR/5_kr_kakao_... (120241...) ACTIVE ...
     if (!id) {
-      const m = rawName.match(/^([A-Za-z0-9]+)\/\d+[_\s]/);
-      if (m) id = m[1];
+      const m = rawName.match(/^([A-Za-z0-9]+)\/([0-9]+)[_\s]/);
+      if (m) { id = m[1]; commission = parseFloat(m[2]) || 0; }
     }
 
     if (!id) continue;
@@ -340,7 +344,7 @@ function parseCSV(text) {
     const spend = parseFloat(spendRaw) || 0;
     const date = di >= 0 ? (row[di]||'').replace(/"/g,'').trim() : '';
     const currency = ci >= 0 ? (row[ci]||'USD').replace(/"/g,'').trim().toUpperCase() : 'USD';
-    rows.push({ id, spend, date, currency });
+    rows.push({ id, spend, date, currency, commission });
   }
   if (!rows.length) throw new Error('Нет строк с распознанным форматом ID');
   return rows;
@@ -372,8 +376,10 @@ async function processFile() {
   const groups = {};
   for (const row of csvData) {
     const spendUSD = convertToUSD(row.spend, row.currency || 'USD', rates);
-    if (!groups[row.id]) groups[row.id] = { spend: 0, count: 0 };
-    groups[row.id].spend += spendUSD;
+    const commission = row.commission || 0;
+    const spendWithComm = spendUSD * (1 + commission / 100);
+    if (!groups[row.id]) groups[row.id] = { spend: 0, count: 0, commission };
+    groups[row.id].spend += spendWithComm;
     groups[row.id].count++;
   }
 
@@ -390,7 +396,9 @@ async function processFile() {
     id,
     name: keitaroCampaigns[id] ? keitaroCampaigns[id].name : null,
     keitaroId: keitaroCampaigns[id] ? keitaroCampaigns[id].numId : null,
-    spend: groups[id].spend, count: groups[id].count
+    spend: groups[id].spend,
+    count: groups[id].count,
+    commission: groups[id].commission || 0
   })).sort((a,b)=>b.spend-a.spend);
   lastResults = results;
 
@@ -414,6 +422,7 @@ function renderResults(results) {
     <tr>
       <td class="td-id">${esc(r.id)}</td>
       <td class="td-name ${r.name?'':'unknown'}">${r.name?esc(r.name):'Не найдено в Keitaro'}${!r.name?'<span class="badge-error">?</span>':''}</td>
+      <td class="td-count">${r.commission ? '+'+r.commission+'%' : '—'}</td>
       <td class="td-count">${r.count}</td>
       <td class="td-spend">$${r.spend.toFixed(2)}</td>
     </tr>
