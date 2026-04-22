@@ -147,14 +147,14 @@ HTML = r"""<!DOCTYPE html>
     <div class="card-title">CSV из Meta Ads</div>
     <div id="csvError" class="error-box"></div>
     <div class="upload-zone" id="uploadZone">
-      <input type="file" id="fileInput" accept=".csv">
+      <input type="file" id="fileInput" accept=".csv" multiple>
       <div class="upload-icon">📊</div>
-      <h3>Загрузи отчёт из Meta Ads</h3>
-      <p>Перетащи .csv файл или нажми для выбора</p>
+      <h3>Загрузи отчёты из Meta Ads</h3>
+      <p>Можно несколько файлов сразу — перетащи или нажми для выбора</p>
     </div>
     <div class="file-ready" id="fileReady">
       <span>✅</span>
-      <span>Файл: <span class="fname" id="fileName"></span></span>
+      <span>Загружено: <span class="fname" id="fileName"></span></span>
     </div>
     <br>
     <div class="progress-wrap" id="progressWrap">
@@ -248,23 +248,37 @@ const uploadZone = document.getElementById('uploadZone');
 const fileInput = document.getElementById('fileInput');
 uploadZone.addEventListener('dragover', e => { e.preventDefault(); uploadZone.classList.add('drag'); });
 uploadZone.addEventListener('dragleave', () => uploadZone.classList.remove('drag'));
-uploadZone.addEventListener('drop', e => { e.preventDefault(); uploadZone.classList.remove('drag'); if(e.dataTransfer.files[0]) loadFile(e.dataTransfer.files[0]); });
-fileInput.addEventListener('change', () => { if(fileInput.files[0]) loadFile(fileInput.files[0]); });
+uploadZone.addEventListener('drop', e => { e.preventDefault(); uploadZone.classList.remove('drag'); if(e.dataTransfer.files.length) loadFiles(Array.from(e.dataTransfer.files)); });
+fileInput.addEventListener('change', () => { if(fileInput.files.length) loadFiles(Array.from(fileInput.files)); });
 
-function loadFile(file) {
+async function loadFiles(files) {
   const errEl = document.getElementById('csvError');
   errEl.classList.remove('show');
-  const reader = new FileReader();
-  reader.onload = e => {
-    try {
-      csvData = parseCSV(e.target.result);
-      document.getElementById('fileName').textContent = file.name;
-      document.getElementById('fileReady').classList.add('show');
-      document.getElementById('processBtn').disabled = false;
-    } catch(err) { showErr(errEl, err.message); }
-  };
-  reader.readAsText(file, 'UTF-8');  // BOM handled in parseCSV
+  csvData = [];
+  let errors = [];
+  for (const file of files) {
+    await new Promise((resolve) => {
+      const reader = new FileReader();
+      reader.onload = ev => {
+        try {
+          const rows = parseCSV(ev.target.result);
+          csvData = csvData.concat(rows);
+        } catch(err) { errors.push(file.name + ': ' + err.message); }
+        resolve();
+      };
+      reader.readAsText(file, 'UTF-8');
+    });
+  }
+  if (errors.length && !csvData.length) { showErr(errEl, errors.join(' | ')); return; }
+  if (csvData.length) {
+    document.getElementById('fileName').textContent = files.length === 1
+      ? files[0].name
+      : files.length + ' файлов (' + csvData.length + ' строк)';
+    document.getElementById('fileReady').classList.add('show');
+    document.getElementById('processBtn').disabled = false;
+  }
 }
+
 
 function parseCSV(text) {
   // Снимаем BOM если есть
