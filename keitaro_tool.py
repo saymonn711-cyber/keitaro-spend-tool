@@ -157,6 +157,10 @@ HTML = r"""<!DOCTYPE html>
       <span>Загружено: <span class="fname" id="fileName"></span></span>
     </div>
     <br>
+    <div style="margin-bottom:16px">
+      <label>Дата отчёта</label>
+      <input type="date" id="reportDate" style="width:100%;background:var(--surface);border:1px solid var(--border);border-radius:8px;padding:11px 14px;color:var(--text);font-family:'JetBrains Mono',monospace;font-size:.8rem;margin-bottom:0">
+    </div>
     <div class="progress-wrap" id="progressWrap">
       <div class="progress-info">
         <span id="progressText">Обрабатываем...</span>
@@ -206,6 +210,12 @@ HTML = r"""<!DOCTYPE html>
 
 <script>
 let csvData = [], keitaroCampaigns = {}, apiUrl = '', apiKeyVal = '';
+
+// Ставим сегодняшнюю дату по умолчанию
+document.addEventListener('DOMContentLoaded', () => {
+  const today = new Date().toISOString().split('T')[0];
+  document.getElementById('reportDate').value = today;
+});
 
 function goStep(n) {
   document.querySelectorAll('.panel').forEach(p => p.classList.remove('active'));
@@ -287,12 +297,15 @@ function parseCSV(text) {
   const lines = text.trim().split('\n');
   if (lines.length < 2) throw new Error('Файл пустой');
 
-  // Определяем разделитель: запятая или точка с запятой
+  // Определяем разделитель
   const sep = lines[0].includes(';') ? ';' : ',';
-
   const hdr = splitLine(lines[0], sep).map(h => h.replace(/"/g,'').trim());
-  const ni = hdr.findIndex(h => /название|campaign.?name|кампани/i.test(h));
-  const si = hdr.findIndex(h => /потраченн|spend|amount.?spent/i.test(h));
+
+  // Поддержка двух форматов:
+  // Формат 1 (стандартный): "Название кампании" + "Потраченная сумма (USD)"
+  // Формат 2 (по аккаунтам): "Кампания" + "Расход"
+  const ni = hdr.findIndex(h => /название|campaign.?name|^кампани/i.test(h));
+  const si = hdr.findIndex(h => /потраченн|spend|amount.?spent|^расход$/i.test(h));
   const di = hdr.findIndex(h => /начал|start|reporting.?starts/i.test(h));
 
   if (ni===-1) throw new Error('Не найдена колонка с названием. Колонки: ' + hdr.join(', '));
@@ -301,19 +314,33 @@ function parseCSV(text) {
   const rows = [];
   for (let i = 1; i < lines.length; i++) {
     const row = splitLine(lines[i], sep).map(h => h.replace(/^"|"$/g,'').trim());
-    const name = (row[ni]||'').trim();
-    if (!name) continue;
-    const pipe = name.indexOf('|');
-    if (pipe===-1) continue;
-    let id = name.substring(0,pipe).trim();
-    // Убираем /N суффикс: 'PfWwFFWF/5' → 'PfWwFFWF'
-    id = id.replace(/\/\d+$/, '').trim();
+    const rawName = (row[ni]||'').trim();
+    if (!rawName) continue;
+
+    let id = null;
+
+    // Формат 1: PfWwFFWF/5 | NL PP Cross ...
+    const pipe = rawName.indexOf('|');
+    if (pipe !== -1) {
+      let rawId = rawName.substring(0, pipe).trim();
+      rawId = rawId.replace(/\/\d+$/, '').trim();
+      if (rawId) id = rawId;
+    }
+
+    // Формат 2: c2njpmMR/5_kr_kakao_... (120241...) ACTIVE ...
+    if (!id) {
+      const m = rawName.match(/^([A-Za-z0-9]+)\/\d+[_\s]/);
+      if (m) id = m[1];
+    }
+
     if (!id) continue;
-    const spend = parseFloat((row[si]||'0').replace(',','.')) || 0;
+
+    const spendRaw = (row[si]||'0').replace(/[^0-9.,]/g,'').replace(',','.');
+    const spend = parseFloat(spendRaw) || 0;
     const date = di >= 0 ? (row[di]||'').replace(/"/g,'').trim() : '';
     rows.push({ id, spend, date });
   }
-  if (!rows.length) throw new Error('Нет строк с форматом "ID | Название"');
+  if (!rows.length) throw new Error('Нет строк с распознанным форматом ID');
   return rows;
 }
 
@@ -421,7 +448,10 @@ async function sendToKeitaro() {
   statusEl.innerHTML = '';
 
   // Берём дату из CSV (первая строка)
-  const dateStr = csvData[0] ? (csvData[0].date || new Date().toISOString().split('T')[0]) : new Date().toISOString().split('T')[0];
+  // Берём дату из поля выбора (или из CSV если там есть, иначе сегодня)
+  const manualDate = document.getElementById('reportDate').value;
+  const csvDate = csvData[0] ? csvData[0].date : '';
+  const dateStr = manualDate || csvDate || new Date().toISOString().split('T')[0];
 
   let okCount = 0, errCount = 0, skipCount = 0;
 
