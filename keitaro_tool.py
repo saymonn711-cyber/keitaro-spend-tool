@@ -307,6 +307,7 @@ function parseCSV(text) {
   const ni = hdr.findIndex(h => /название|campaign.?name|^кампани/i.test(h));
   const si = hdr.findIndex(h => /потраченн|spend|amount.?spent|^расход$/i.test(h));
   const di = hdr.findIndex(h => /начал|start|reporting.?starts/i.test(h));
+  const ci = hdr.findIndex(h => /валют|currency/i.test(h));
 
   if (ni===-1) throw new Error('Не найдена колонка с названием. Колонки: ' + hdr.join(', '));
   if (si===-1) throw new Error('Не найдена колонка со спендом. Колонки: ' + hdr.join(', '));
@@ -338,7 +339,8 @@ function parseCSV(text) {
     const spendRaw = (row[si]||'0').replace(/[^0-9.,]/g,'').replace(',','.');
     const spend = parseFloat(spendRaw) || 0;
     const date = di >= 0 ? (row[di]||'').replace(/"/g,'').trim() : '';
-    rows.push({ id, spend, date });
+    const currency = ci >= 0 ? (row[ci]||'USD').replace(/"/g,'').trim().toUpperCase() : 'USD';
+    rows.push({ id, spend, date, currency });
   }
   if (!rows.length) throw new Error('Нет строк с распознанным форматом ID');
   return rows;
@@ -362,12 +364,19 @@ async function processFile() {
   const pt=document.getElementById('progressText'), pc=document.getElementById('progressCount');
   pw.classList.add('show');
 
+  // Загружаем курсы валют
+  pt.textContent = 'Загружаем курсы валют...';
+  const rates = await getExchangeRates();
+
+  // Группируем с конвертацией в USD
   const groups = {};
   for (const row of csvData) {
-    if (!groups[row.id]) groups[row.id]={spend:0,count:0};
-    groups[row.id].spend += row.spend;
+    const spendUSD = convertToUSD(row.spend, row.currency || 'USD', rates);
+    if (!groups[row.id]) groups[row.id] = { spend: 0, count: 0 };
+    groups[row.id].spend += spendUSD;
     groups[row.id].count++;
   }
+
   const ids = Object.keys(groups);
   for (let i=0;i<ids.length;i++) {
     pc.textContent=`${i+1} / ${ids.length}`;
@@ -384,8 +393,6 @@ async function processFile() {
     spend: groups[id].spend, count: groups[id].count
   })).sort((a,b)=>b.spend-a.spend);
   lastResults = results;
-  // grab date from first csv row
-  if (csvData.length) results.forEach(r => r.date = csvData[0].date);
 
   renderResults(results);
   setTimeout(()=>{
@@ -437,6 +444,29 @@ function restart(){
 
 // Хранение последних результатов для отправки
 let lastResults = [];
+let exchangeRates = {}; // кэш курсов валют
+
+async function getExchangeRates() {
+  if (Object.keys(exchangeRates).length) return exchangeRates;
+  try {
+    const resp = await fetch('/proxy/rates');
+    const data = await resp.json();
+    // data.rates содержит курсы к USD: { EUR: 0.92, UAH: 41.5, ... }
+    // Нам нужно конвертировать X → USD, значит делим на rate
+    exchangeRates = data.rates || {};
+    return exchangeRates;
+  } catch(e) {
+    console.warn('Не удалось получить курсы валют:', e);
+    return {};
+  }
+}
+
+function convertToUSD(amount, currency, rates) {
+  if (!currency || currency === 'USD') return amount;
+  const rate = rates[currency];
+  if (!rate) return amount; // если валюта не найдена — оставляем как есть
+  return amount / rate; // rate = сколько единиц валюты в 1 USD
+}
 
 async function sendToKeitaro() {
   if (!lastResults.length) return;
@@ -609,6 +639,23 @@ class Handler(http.server.BaseHTTPRequestHandler):
                     self._json_error(e.code, f'Keitaro: HTTP {e.code} — {err_body[:200]}')
                 except urllib.error.URLError as e:
                     self._json_error(502, f'Не удалось подключиться: {e.reason}')
+            except Exception as e:
+                self._json_error(500, str(e))
+            return
+
+        if parsed.path == '/proxy/rates':
+            try:
+                req = urllib.request.Request(
+                    'https://open.er-api.com/v6/latest/USD',
+                    headers={'User-Agent': 'Mozilla/5.0'}
+                )
+                with urllib.request.urlopen(req, timeout=10) as resp:
+                    body = resp.read()
+                self.send_response(200)
+                self.send_header('Content-Type', 'application/json')
+                self.send_header('Access-Control-Allow-Origin', '*')
+                self.end_headers()
+                self.wfile.write(body)
             except Exception as e:
                 self._json_error(500, str(e))
             return
