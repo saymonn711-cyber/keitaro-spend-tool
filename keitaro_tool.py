@@ -539,8 +539,14 @@ async function sendToKeitaro() {
       });
       let data = await resp.json().catch(() => ({}));
 
+      // Логируем ответ для отладки
+      console.log('update_costs response:', JSON.stringify(data));
       // Если кликов не найдено и есть adName и токен — создаём фейковый клик и повторяем
-      if (resp.ok && r.adName && r.token && (data.updated === 0 || data.clicks_updated === 0 || data.count === 0)) {
+      // Keitaro может вернуть разные форматы — проверяем все варианты
+      const noClicks = data.updated === 0 || data.clicks_updated === 0 || data.count === 0 ||
+        data.updated_clicks === 0 || (data.message && data.message.includes('0')) ||
+        JSON.stringify(data) === '{}' || JSON.stringify(data) === '{"status":"ok"}';
+      if (resp.ok && r.adName && r.token && noClicks) {
         statusEl.innerHTML += `<div class="row-skip">⚡ ${esc(r.name)} [${esc(r.adName)}] — кликов нет, создаём фейковый клик...</div>`;
         try {
           const clickUrl = apiUrl + '/' + r.token + '?sub_id_1=' + encodeURIComponent(r.adName);
