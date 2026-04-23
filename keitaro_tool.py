@@ -332,9 +332,9 @@ function parseCSV(text) {
       if (rawId) id = rawId;
     }
 
-    // Формат 2: c2njpmMR/5_kr_kakao_... (120241...) ACTIVE ...
+    // Формат 2: c2njpmMR/5_kr_... или G2jLTsHt\5_uk_... (прямой или обратный слеш)
     if (!id) {
-      const m = rawName.match(/^([A-Za-z0-9]+)\/([0-9]+)[_\s]/);
+      const m = rawName.match(/^([A-Za-z0-9]+)[/\\]([0-9]+)[_\s]/);
       if (m) { id = m[1]; commission = parseFloat(m[2]) || 0; }
     }
 
