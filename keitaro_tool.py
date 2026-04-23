@@ -527,6 +527,17 @@ async function sendToKeitaro() {
     if (r.adName) payload.sub_id_1 = r.adName;
 
     try {
+      // Если есть adName и токен — сначала создаём фейковый клик чтобы sub1 точно был
+      if (r.adName && r.token) {
+        try {
+          const clickUrl = apiUrl + '/' + r.token + '?sub_id_1=' + encodeURIComponent(r.adName);
+          await fetch('/proxy/fake_click?url=' + encodeURIComponent(clickUrl));
+          await new Promise(res => setTimeout(res, 2000)); // ждём пока клик запишется в БД
+        } catch(e) {
+          console.warn('fake click error:', e);
+        }
+      }
+
       let resp = await fetch('/proxy/update_costs', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
@@ -538,36 +549,6 @@ async function sendToKeitaro() {
         })
       });
       let data = await resp.json().catch(() => ({}));
-
-      // Логируем ответ для отладки
-      console.log('update_costs response:', JSON.stringify(data));
-      // Если кликов не найдено и есть adName и токен — создаём фейковый клик и повторяем
-      // Keitaro может вернуть разные форматы — проверяем все варианты
-      const noClicks = data.updated === 0 || data.clicks_updated === 0 || data.count === 0 ||
-        data.updated_clicks === 0 || (data.message && data.message.includes('0')) ||
-        JSON.stringify(data) === '{}' || JSON.stringify(data) === '{"status":"ok"}';
-      if (resp.ok && r.adName && r.token && noClicks) {
-        statusEl.innerHTML += `<div class="row-skip">⚡ ${esc(r.name)} [${esc(r.adName)}] — кликов нет, создаём фейковый клик...</div>`;
-        try {
-          const clickUrl = apiUrl + '/' + r.token + '?sub_id_1=' + encodeURIComponent(r.adName);
-          await fetch('/proxy/fake_click?url=' + encodeURIComponent(clickUrl));
-          await new Promise(res => setTimeout(res, 1500)); // ждём пока клик запишется
-          // Повторяем update_costs
-          resp = await fetch('/proxy/update_costs', {
-            method: 'POST',
-            headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({
-              url: apiUrl,
-              apikey: apiKeyVal,
-              campaign_id: r.keitaroId,
-              payload
-            })
-          });
-          data = await resp.json().catch(() => ({}));
-        } catch(e) {
-          // ignore fake click errors
-        }
-      }
 
       if (resp.ok) {
         const label = r.adName ? `${esc(r.name)} [${esc(r.adName)}]` : esc(r.name);
