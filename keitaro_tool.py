@@ -530,7 +530,8 @@ async function sendToKeitaro() {
       // Если есть adName и токен — сначала создаём фейковый клик чтобы sub1 точно был
       if (r.adName && r.token) {
         try {
-          const clickUrl = apiUrl + '/' + r.token + '?sub_id_1=' + encodeURIComponent(r.adName);
+          // Трекинговая ссылка использует alias и параметр sub1
+          const clickUrl = apiUrl + '/' + r.id + '?sub1=' + encodeURIComponent(r.adName);
           await fetch('/proxy/fake_click?url=' + encodeURIComponent(clickUrl));
           await new Promise(res => setTimeout(res, 2000)); // ждём пока клик запишется в БД
         } catch(e) {
