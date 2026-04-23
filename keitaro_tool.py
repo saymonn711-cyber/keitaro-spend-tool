@@ -724,9 +724,9 @@ class Handler(http.server.BaseHTTPRequestHandler):
                 self._json_error(400, 'Не указан url')
                 return
             try:
-                import urllib.parse
+                from urllib.parse import unquote
                 # Убедимся что URL правильно декодирован
-                click_url = urllib.parse.unquote(click_url)
+                click_url = unquote(click_url)
                 print(f'Fake click URL: {click_url}', flush=True)
                 req = urllib.request.Request(
                     click_url,
