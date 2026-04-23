@@ -527,33 +527,34 @@ async function sendToKeitaro() {
     if (r.adName) payload.sub_id_1 = r.adName;
 
     try {
-      // Если есть adName и токен — сначала создаём фейковый клик чтобы sub1 точно был
-      if (r.adName && r.token) {
-        try {
-          // Трекинговая ссылка использует alias и параметр sub1
-          const clickUrl = apiUrl + '/' + r.id + '?sub1=' + encodeURIComponent(r.adName);
-          await fetch('/proxy/fake_click', {
-            method: 'POST',
-            headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({ url: clickUrl })
-          });
-          await new Promise(res => setTimeout(res, 2000)); // ждём пока клик запишется в БД
-        } catch(e) {
-          console.warn('fake click error:', e);
-        }
+      let resp, data;
+
+      if (r.adName) {
+        // Если есть название объявления — передаём спенд прямо в клик через cost параметр
+        // Это единственный способ записать точный спенд по каждому креативу отдельно
+        const clickUrl = apiUrl + '/' + r.id + '?sub1=' + encodeURIComponent(r.adName) + '&cost=' + r.spend.toFixed(2);
+        const clickResp = await fetch('/proxy/fake_click', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ url: clickUrl })
+        });
+        resp = clickResp;
+        data = await clickResp.json().catch(() => ({}));
+      } else {
+        // Без объявления — используем update_costs для всей кампании
+        resp = await fetch('/proxy/update_costs', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            url: apiUrl,
+            apikey: apiKeyVal,
+            campaign_id: r.keitaroId,
+            payload
+          })
+        });
+        data = await resp.json().catch(() => ({}));
       }
 
-      let resp = await fetch('/proxy/update_costs', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          url: apiUrl,
-          apikey: apiKeyVal,
-          campaign_id: r.keitaroId,
-          payload
-        })
-      });
-      let data = await resp.json().catch(() => ({}));
 
       if (resp.ok) {
         const label = r.adName ? `${esc(r.name)} [${esc(r.adName)}]` : esc(r.name);
