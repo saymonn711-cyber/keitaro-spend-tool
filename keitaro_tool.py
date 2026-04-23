@@ -503,8 +503,8 @@ async function sendToKeitaro() {
 
     // Строим payload для update_costs
     const payload = {
-      from: dateStr,
-      to: dateStr,
+      start_date: dateStr,
+      end_date: dateStr,
       timezone: 'UTC',
       cost: r.spend.toFixed(2),
       currency: 'USD'
