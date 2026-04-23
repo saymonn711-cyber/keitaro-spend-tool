@@ -513,57 +513,59 @@ async function sendToKeitaro() {
     currency: 'USD'
   };
 
-  // Сначала разделяем на кампании без объявлений и с объявлениями
-  const noAdResults = lastResults.filter(r => r.name && !r.adName);
-  const adResults = lastResults.filter(r => r.name && r.adName);
-  const skippedResults = lastResults.filter(r => !r.name);
-
-  // Показываем пропущенные
-  for (const r of skippedResults) {
-    statusEl.innerHTML += `<div class="row-skip">⏭ ${esc(r.id)} — пропущено (не найдено в Keitaro)</div>`;
-    skipCount++;
-  }
-
-  // Группируем объявления по keitaroId
+  // Группируем по keitaroId
   const byId = {};
-  for (const r of adResults) {
-    if (!byId[r.keitaroId]) byId[r.keitaroId] = { name: r.name, withClicks: [], noClicksSpend: 0, noClicksList: [] };
-  }
-
-  // Проверяем клики для каждого объявления
-  statusEl.innerHTML += `<div style="color:var(--muted);font-size:.7rem">🔍 Проверяем клики в Keitaro...</div>`;
-  for (const r of adResults) {
-    const checkUrl = '/proxy/check_clicks?url=' + encodeURIComponent(apiUrl) +
-      '&apikey=' + encodeURIComponent(apiKeyVal) +
-      '&campaign_id=' + r.keitaroId +
-      '&sub1=' + encodeURIComponent(r.adName) +
-      '&date=' + encodeURIComponent(dateStr);
-    try {
-      const checkResp = await fetch(checkUrl);
-      const checkData = await checkResp.json().catch(() => ({}));
-      const rows = checkData.rows || checkData.data || [];
-      const totalClicks = rows.reduce((s, row) => s + (parseInt(row.clicks || row[1] || 0)), 0);
-      if (totalClicks > 0) {
-        byId[r.keitaroId].withClicks.push(r);
-      } else {
-        byId[r.keitaroId].noClicksSpend += r.spend;
-        byId[r.keitaroId].noClicksList.push(r.adName);
-      }
-    } catch(e) {
-      byId[r.keitaroId].noClicksSpend += r.spend;
-      byId[r.keitaroId].noClicksList.push(r.adName);
+  for (const r of lastResults) {
+    if (!r.name) {
+      statusEl.innerHTML += `<div class="row-skip">⏭ ${esc(r.id)} — пропущено (не найдено в Keitaro)</div>`;
+      skipCount++;
+      continue;
+    }
+    if (!byId[r.keitaroId]) byId[r.keitaroId] = { name: r.name, ads: [], noAd: null };
+    if (r.adName) {
+      byId[r.keitaroId].ads.push(r);
+    } else {
+      byId[r.keitaroId].noAd = r;
     }
   }
 
-  // Отправляем объявления с кликами — каждое отдельно с sub_id_1
+  // Обрабатываем каждую кампанию
   for (const [campaignId, group] of Object.entries(byId)) {
-    for (const r of group.withClicks) {
+
+    // Кампания без объявлений
+    if (group.noAd) {
+      const r = group.noAd;
+      try {
+        const payload = { ...basePayload, cost: r.spend.toFixed(2) };
+        const resp = await fetch('/proxy/update_costs', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ url: apiUrl, apikey: apiKeyVal, campaign_id: campaignId, payload })
+        });
+        const data = await resp.json().catch(() => ({}));
+        if (resp.ok) {
+          statusEl.innerHTML += `<div class="row-ok">✅ ${esc(group.name)} — $${r.spend.toFixed(2)} отправлено</div>`;
+          okCount++;
+        } else {
+          statusEl.innerHTML += `<div class="row-err">❌ ${esc(group.name)} — ${esc(data.error || 'HTTP '+resp.status)}</div>`;
+          errCount++;
+        }
+      } catch(e) {
+        statusEl.innerHTML += `<div class="row-err">❌ ${esc(group.name)} — ${esc(e.message)}</div>`;
+        errCount++;
+      }
+      statusEl.scrollTop = statusEl.scrollHeight;
+      await new Promise(res => setTimeout(res, 200));
+    }
+
+    // Объявления — каждое отдельно с sub_id_1
+    for (const r of group.ads) {
       try {
         const payload = { ...basePayload, cost: r.spend.toFixed(2), sub_id_1: r.adName };
         const resp = await fetch('/proxy/update_costs', {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ url: apiUrl, apikey: apiKeyVal, campaign_id: r.keitaroId, payload })
+          body: JSON.stringify({ url: apiUrl, apikey: apiKeyVal, campaign_id: campaignId, payload })
         });
         const data = await resp.json().catch(() => ({}));
         if (resp.ok) {
@@ -580,56 +582,6 @@ async function sendToKeitaro() {
       statusEl.scrollTop = statusEl.scrollHeight;
       await new Promise(res => setTimeout(res, 200));
     }
-
-    // Объявления без кликов — суммируем и добавляем к общей сумме кампании
-    if (group.noClicksSpend > 0) {
-      try {
-        const payload = { ...basePayload, cost: group.noClicksSpend.toFixed(2) };
-        const resp = await fetch('/proxy/update_costs', {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ url: apiUrl, apikey: apiKeyVal, campaign_id: campaignId, payload })
-        });
-        const data = await resp.json().catch(() => ({}));
-        if (resp.ok) {
-          statusEl.innerHTML += `<div class="row-ok">✅ ${esc(group.name)} — $${group.noClicksSpend.toFixed(2)} (без кликов: ${group.noClicksList.join(', ')}) распределено по кампании</div>`;
-          okCount++;
-        } else {
-          statusEl.innerHTML += `<div class="row-err">❌ ${esc(group.name)} — ${esc(data.error || 'HTTP '+resp.status)}</div>`;
-          errCount++;
-        }
-      } catch(e) {
-        statusEl.innerHTML += `<div class="row-err">❌ ${esc(group.name)} — ${esc(e.message)}</div>`;
-        errCount++;
-      }
-      statusEl.scrollTop = statusEl.scrollHeight;
-      await new Promise(res => setTimeout(res, 200));
-    }
-  }
-
-  // Кампании без объявлений — update_costs на всю кампанию
-  for (const r of noAdResults) {
-    try {
-      const payload = { ...basePayload, cost: r.spend.toFixed(2) };
-      const resp = await fetch('/proxy/update_costs', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ url: apiUrl, apikey: apiKeyVal, campaign_id: r.keitaroId, payload })
-      });
-      const data = await resp.json().catch(() => ({}));
-      if (resp.ok) {
-        statusEl.innerHTML += `<div class="row-ok">✅ ${esc(r.name)} — $${r.spend.toFixed(2)} отправлено</div>`;
-        okCount++;
-      } else {
-        statusEl.innerHTML += `<div class="row-err">❌ ${esc(r.name)} — ${esc(data.error || 'HTTP '+resp.status)}</div>`;
-        errCount++;
-      }
-    } catch(e) {
-      statusEl.innerHTML += `<div class="row-err">❌ ${esc(r.name)} — ${esc(e.message)}</div>`;
-      errCount++;
-    }
-    statusEl.scrollTop = statusEl.scrollHeight;
-    await new Promise(res => setTimeout(res, 200));
   }
 
   statusEl.innerHTML += `<br><strong>Итого: ✅ ${okCount} отправлено, ❌ ${errCount} ошибок, ⏭ ${skipCount} пропущено</strong>`;
