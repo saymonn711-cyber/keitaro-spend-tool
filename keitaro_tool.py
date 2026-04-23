@@ -527,7 +527,6 @@ async function sendToKeitaro() {
     if (r.adName) payload.sub_id_1 = r.adName;
 
     try {
-    try {
       let resp, data;
 
       if (r.adName) {
