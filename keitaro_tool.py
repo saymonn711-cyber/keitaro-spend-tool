@@ -527,33 +527,51 @@ async function sendToKeitaro() {
     if (r.adName) payload.sub_id_1 = r.adName;
 
     try {
+    try {
       let resp, data;
 
       if (r.adName) {
-        // Если есть название объявления — передаём спенд прямо в клик через cost параметр
-        // Это единственный способ записать точный спенд по каждому креативу отдельно
-        const clickUrl = apiUrl + '/' + r.id + '?sub1=' + encodeURIComponent(r.adName) + '&cost=' + r.spend.toFixed(2);
-        const clickResp = await fetch('/proxy/fake_click', {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ url: clickUrl })
-        });
-        resp = clickResp;
-        data = await clickResp.json().catch(() => ({}));
+        // Проверяем есть ли реальные клики с этим sub1 за этот день
+        const checkUrl = '/proxy/check_clicks?url=' + encodeURIComponent(apiUrl) +
+          '&apikey=' + encodeURIComponent(apiKeyVal) +
+          '&campaign_id=' + r.keitaroId +
+          '&sub1=' + encodeURIComponent(r.adName) +
+          '&date=' + encodeURIComponent(dateStr);
+        const checkResp = await fetch(checkUrl);
+        const checkData = await checkResp.json().catch(() => ({}));
+
+        // Считаем клики из ответа
+        const rows = checkData.rows || checkData.data || [];
+        const hasClicks = rows.length > 0 && rows.some(row => (row.clicks || row[0] || 0) > 0);
+
+        if (hasClicks) {
+          // Есть реальные клики — используем update_costs с sub_id_1
+          resp = await fetch('/proxy/update_costs', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ url: apiUrl, apikey: apiKeyVal, campaign_id: r.keitaroId, payload })
+          });
+          data = await resp.json().catch(() => ({}));
+        } else {
+          // Нет кликов — создаём фейковый клик с cost
+          const clickUrl = apiUrl + '/' + r.id + '?sub1=' + encodeURIComponent(r.adName) + '&cost=' + r.spend.toFixed(2);
+          resp = await fetch('/proxy/fake_click', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ url: clickUrl })
+          });
+          data = await resp.json().catch(() => ({}));
+        }
       } else {
-        // Без объявления — используем update_costs для всей кампании
+        // Без объявления — update_costs на всю кампанию
         resp = await fetch('/proxy/update_costs', {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({
-            url: apiUrl,
-            apikey: apiKeyVal,
-            campaign_id: r.keitaroId,
-            payload
-          })
+          body: JSON.stringify({ url: apiUrl, apikey: apiKeyVal, campaign_id: r.keitaroId, payload })
         });
         data = await resp.json().catch(() => ({}));
       }
+
 
 
       if (resp.ok) {
@@ -717,6 +735,38 @@ class Handler(http.server.BaseHTTPRequestHandler):
                     self._json_error(e.code, f'Keitaro: HTTP {e.code} — {err_body[:200]}')
                 except urllib.error.URLError as e:
                     self._json_error(502, f'Не удалось подключиться: {e.reason}')
+            except Exception as e:
+                self._json_error(500, str(e))
+            return
+
+        if parsed.path == '/proxy/check_clicks':
+            params = parse_qs(parsed.query)
+            keitaro_url = params.get('url', [''])[0]
+            api_key = params.get('apikey', [''])[0]
+            campaign_id = params.get('campaign_id', [''])[0]
+            sub1 = params.get('sub1', [''])[0]
+            date = params.get('date', [''])[0]
+            target = keitaro_url.rstrip('/') + '/admin_api/v1/report/build'
+            body = json.dumps({
+                'range': {'from': date + ' 00:00', 'to': date + ' 23:59', 'timezone': 'Europe/Kyiv'},
+                'filters': [
+                    {'name': 'campaign_id', 'operator': '==', 'expression': campaign_id},
+                    {'name': 'sub_id_1', 'operator': '==', 'expression': sub1}
+                ],
+                'metrics': ['clicks'],
+                'grouping': ['sub_id_1']
+            }).encode('utf-8')
+            req = urllib.request.Request(target, data=body, headers={
+                'Api-Key': api_key, 'Content-Type': 'application/json', 'User-Agent': 'Mozilla/5.0'
+            }, method='POST')
+            try:
+                with urllib.request.urlopen(req, timeout=10) as resp:
+                    resp_body = resp.read()
+                self.send_response(200)
+                self.send_header('Content-Type', 'application/json')
+                self.send_header('Access-Control-Allow-Origin', '*')
+                self.end_headers()
+                self.wfile.write(resp_body)
             except Exception as e:
                 self._json_error(500, str(e))
             return
