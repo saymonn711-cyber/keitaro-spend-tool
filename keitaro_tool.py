@@ -506,14 +506,7 @@ async function sendToKeitaro() {
 
   let okCount = 0, errCount = 0, skipCount = 0;
 
-  const basePayload = {
-    start_date: dateStr + ' 00:00',
-    end_date: dateStr + ' 23:59',
-    timezone: 'Europe/Kyiv',
-    currency: 'USD'
-  };
-
-  // Группируем по keitaroId
+  // Группируем по keitaroId — суммируем весь спенд по кампании
   const byId = {};
   for (const r of lastResults) {
     if (!r.name) {
@@ -521,67 +514,38 @@ async function sendToKeitaro() {
       skipCount++;
       continue;
     }
-    if (!byId[r.keitaroId]) byId[r.keitaroId] = { name: r.name, ads: [], noAd: null };
-    if (r.adName) {
-      byId[r.keitaroId].ads.push(r);
-    } else {
-      byId[r.keitaroId].noAd = r;
-    }
+    if (!byId[r.keitaroId]) byId[r.keitaroId] = { name: r.name, spend: 0 };
+    byId[r.keitaroId].spend += r.spend;
   }
 
-  // Обрабатываем каждую кампанию
   for (const [campaignId, group] of Object.entries(byId)) {
-
-    // Кампания без объявлений
-    if (group.noAd) {
-      const r = group.noAd;
-      try {
-        const payload = { ...basePayload, cost: r.spend.toFixed(2) };
-        const resp = await fetch('/proxy/update_costs', {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ url: apiUrl, apikey: apiKeyVal, campaign_id: campaignId, payload })
-        });
-        const data = await resp.json().catch(() => ({}));
-        if (resp.ok) {
-          statusEl.innerHTML += `<div class="row-ok">✅ ${esc(group.name)} — $${r.spend.toFixed(2)} отправлено</div>`;
-          okCount++;
-        } else {
-          statusEl.innerHTML += `<div class="row-err">❌ ${esc(group.name)} — ${esc(data.error || 'HTTP '+resp.status)}</div>`;
-          errCount++;
-        }
-      } catch(e) {
-        statusEl.innerHTML += `<div class="row-err">❌ ${esc(group.name)} — ${esc(e.message)}</div>`;
+    try {
+      const payload = {
+        start_date: dateStr + ' 00:00',
+        end_date: dateStr + ' 23:59',
+        timezone: 'Europe/Kyiv',
+        cost: group.spend.toFixed(2),
+        currency: 'USD'
+      };
+      const resp = await fetch('/proxy/update_costs', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ url: apiUrl, apikey: apiKeyVal, campaign_id: campaignId, payload })
+      });
+      const data = await resp.json().catch(() => ({}));
+      if (resp.ok) {
+        statusEl.innerHTML += `<div class="row-ok">✅ ${esc(group.name)} — $${group.spend.toFixed(2)} отправлено</div>`;
+        okCount++;
+      } else {
+        statusEl.innerHTML += `<div class="row-err">❌ ${esc(group.name)} — ${esc(data.error || 'HTTP '+resp.status)}</div>`;
         errCount++;
       }
-      statusEl.scrollTop = statusEl.scrollHeight;
-      await new Promise(res => setTimeout(res, 200));
+    } catch(e) {
+      statusEl.innerHTML += `<div class="row-err">❌ ${esc(group.name)} — ${esc(e.message)}</div>`;
+      errCount++;
     }
-
-    // Объявления — каждое отдельно с sub_id_1
-    for (const r of group.ads) {
-      try {
-        const payload = { ...basePayload, cost: r.spend.toFixed(2), sub_id_1: r.adName };
-        const resp = await fetch('/proxy/update_costs', {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ url: apiUrl, apikey: apiKeyVal, campaign_id: campaignId, payload })
-        });
-        const data = await resp.json().catch(() => ({}));
-        if (resp.ok) {
-          statusEl.innerHTML += `<div class="row-ok">✅ ${esc(group.name)} [${esc(r.adName)}] — $${r.spend.toFixed(2)} отправлено</div>`;
-          okCount++;
-        } else {
-          statusEl.innerHTML += `<div class="row-err">❌ ${esc(group.name)} [${esc(r.adName)}] — ${esc(data.error || 'HTTP '+resp.status)}</div>`;
-          errCount++;
-        }
-      } catch(e) {
-        statusEl.innerHTML += `<div class="row-err">❌ ${esc(group.name)} [${esc(r.adName)}] — ${esc(e.message)}</div>`;
-        errCount++;
-      }
-      statusEl.scrollTop = statusEl.scrollHeight;
-      await new Promise(res => setTimeout(res, 200));
-    }
+    statusEl.scrollTop = statusEl.scrollHeight;
+    await new Promise(res => setTimeout(res, 200));
   }
 
   statusEl.innerHTML += `<br><strong>Итого: ✅ ${okCount} отправлено, ❌ ${errCount} ошибок, ⏭ ${skipCount} пропущено</strong>`;
