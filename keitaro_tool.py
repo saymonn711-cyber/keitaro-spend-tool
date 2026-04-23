@@ -375,20 +375,15 @@ async function processFile() {
   pt.textContent = 'Загружаем курсы валют...';
   const rates = await getExchangeRates();
 
-  // Определяем есть ли колонка с объявлениями
-  const hasAdNames = csvData.some(r => r.adName);
-
-  // Группируем с конвертацией в USD
+  // Группируем только по alias — суммируем весь спенд по кампании
   const groups = {};
   for (const row of csvData) {
     const spendUSD = convertToUSD(row.spend, row.currency || 'USD', rates);
     const commission = row.commission || 0;
     const spendWithComm = spendUSD * (1 + commission / 100);
-    // Если есть названия объявлений — группируем по alias+adName
-    const key = hasAdNames && row.adName ? row.id + '|||' + row.adName : row.id;
-    if (!groups[key]) groups[key] = { id: row.id, adName: row.adName || '', spend: 0, count: 0, commission };
-    groups[key].spend += spendWithComm;
-    groups[key].count++;
+    if (!groups[row.id]) groups[row.id] = { id: row.id, spend: 0, count: 0, commission };
+    groups[row.id].spend += spendWithComm;
+    groups[row.id].count++;
   }
 
   const ids = Object.keys(groups);
@@ -400,11 +395,11 @@ async function processFile() {
   }
   pt.textContent='✅ Готово!'; pf.style.width='100%';
 
-  const results = Object.keys(groups).map(key => {
-    const g = groups[key];
+  const results = Object.keys(groups).map(id => {
+    const g = groups[id];
     return {
       id: g.id,
-      adName: g.adName,
+      adName: '',
       name: keitaroCampaigns[g.id] ? keitaroCampaigns[g.id].name : null,
       keitaroId: keitaroCampaigns[g.id] ? keitaroCampaigns[g.id].numId : null,
       token: keitaroCampaigns[g.id] ? keitaroCampaigns[g.id].token : null,
