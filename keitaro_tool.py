@@ -532,7 +532,11 @@ async function sendToKeitaro() {
         try {
           // Трекинговая ссылка использует alias и параметр sub1
           const clickUrl = apiUrl + '/' + r.id + '?sub1=' + encodeURIComponent(r.adName);
-          await fetch('/proxy/fake_click?url=' + encodeURIComponent(clickUrl));
+          await fetch('/proxy/fake_click', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ url: clickUrl })
+          });
           await new Promise(res => setTimeout(res, 2000)); // ждём пока клик запишется в БД
         } catch(e) {
           console.warn('fake click error:', e);
@@ -640,6 +644,35 @@ class Handler(http.server.BaseHTTPRequestHandler):
     def do_POST(self):
         parsed = urlparse(self.path)
 
+        if parsed.path == '/proxy/fake_click':
+            length = int(self.headers.get('Content-Length', 0))
+            body = self.rfile.read(length)
+            try:
+                data = json.loads(body)
+                click_url = data.get('url', '')
+                if not click_url:
+                    self._json_error(400, 'Не указан url')
+                    return
+                print(f'Fake click URL: {click_url}', flush=True)
+                req = urllib.request.Request(
+                    click_url,
+                    headers={
+                        'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36',
+                        'Accept': 'text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8',
+                    }
+                )
+                with urllib.request.urlopen(req, timeout=10) as resp:
+                    resp.read()
+                self.send_response(200)
+                self.send_header('Content-Type', 'application/json')
+                self.send_header('Access-Control-Allow-Origin', '*')
+                self.end_headers()
+                self.wfile.write(b'{"ok":true}')
+            except Exception as e:
+                print(f'Fake click error: {e}', flush=True)
+                self._json_error(500, str(e))
+            return
+
         if parsed.path == '/proxy/update_costs':
             length = int(self.headers.get('Content-Length', 0))
             body = self.rfile.read(length)
@@ -684,15 +717,24 @@ class Handler(http.server.BaseHTTPRequestHandler):
             return
 
         if parsed.path == '/proxy/fake_click':
+            # GET запрос — для обратной совместимости
             params = parse_qs(parsed.query)
             click_url = params.get('url', [''])[0]
             if not click_url:
                 self._json_error(400, 'Не указан url')
                 return
             try:
+                import urllib.parse
+                # Убедимся что URL правильно декодирован
+                click_url = urllib.parse.unquote(click_url)
+                print(f'Fake click URL: {click_url}', flush=True)
                 req = urllib.request.Request(
                     click_url,
-                    headers={'User-Agent': 'Mozilla/5.0 (iPhone; CPU iPhone OS 17_0 like Mac OS X) AppleWebKit/605.1.15'}
+                    headers={
+                        'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36',
+                        'Accept': 'text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8',
+                        'Accept-Language': 'en-US,en;q=0.5',
+                    }
                 )
                 with urllib.request.urlopen(req, timeout=10) as resp:
                     resp.read()
@@ -702,6 +744,7 @@ class Handler(http.server.BaseHTTPRequestHandler):
                 self.end_headers()
                 self.wfile.write(b'{"ok":true}')
             except Exception as e:
+                print(f'Fake click error: {e}', flush=True)
                 self._json_error(500, str(e))
             return
 
