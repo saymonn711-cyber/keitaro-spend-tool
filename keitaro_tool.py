@@ -530,37 +530,14 @@ async function sendToKeitaro() {
       let resp, data;
 
       if (r.adName) {
-        // Проверяем есть ли реальные клики с этим sub1 за этот день
-        const checkUrl = '/proxy/check_clicks?url=' + encodeURIComponent(apiUrl) +
-          '&apikey=' + encodeURIComponent(apiKeyVal) +
-          '&campaign_id=' + r.keitaroId +
-          '&sub1=' + encodeURIComponent(r.adName) +
-          '&date=' + encodeURIComponent(dateStr);
-        const checkResp = await fetch(checkUrl);
-        const checkData = await checkResp.json().catch(() => ({}));
-
-        // Считаем клики из ответа
-        const rows = checkData.rows || checkData.data || [];
-        const hasClicks = rows.length > 0 && rows.some(row => (row.clicks || row[0] || 0) > 0);
-
-        if (hasClicks) {
-          // Есть реальные клики — используем update_costs с sub_id_1
-          resp = await fetch('/proxy/update_costs', {
-            method: 'POST',
-            headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({ url: apiUrl, apikey: apiKeyVal, campaign_id: r.keitaroId, payload })
-          });
-          data = await resp.json().catch(() => ({}));
-        } else {
-          // Нет кликов — создаём фейковый клик с cost
-          const clickUrl = apiUrl + '/' + r.id + '?sub1=' + encodeURIComponent(r.adName) + '&cost=' + r.spend.toFixed(2);
-          resp = await fetch('/proxy/fake_click', {
-            method: 'POST',
-            headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({ url: clickUrl })
-          });
-          data = await resp.json().catch(() => ({}));
-        }
+        // Фейковый клик с cost — точный спенд по каждому креативу
+        const clickUrl = apiUrl + '/' + r.id + '?sub1=' + encodeURIComponent(r.adName) + '&cost=' + r.spend.toFixed(2);
+        resp = await fetch('/proxy/fake_click', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ url: clickUrl })
+        });
+        data = await resp.json().catch(() => ({}));
       } else {
         // Без объявления — update_costs на всю кампанию
         resp = await fetch('/proxy/update_costs', {
@@ -595,6 +572,12 @@ async function sendToKeitaro() {
   statusEl.innerHTML += `<br><strong>Итого: ✅ ${okCount} отправлено, ❌ ${errCount} ошибок, ⏭ ${skipCount} пропущено</strong>`;
   btn.disabled = false;
   btn.textContent = '🚀 Отправить снова';
+  btn.style.background = 'linear-gradient(135deg, #ff4466, #ff8800)';
+  btn.onclick = () => {
+    if (confirm('⚠️ Повторная отправка добавит новые клики и спенд удвоится!\n\nВы уверены?')) {
+      sendToKeitaro();
+    }
+  };
 }
 </script>
 </body>
