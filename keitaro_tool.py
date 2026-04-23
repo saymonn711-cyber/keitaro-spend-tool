@@ -662,8 +662,12 @@ class Handler(http.server.BaseHTTPRequestHandler):
                         'Accept': 'text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8',
                     }
                 )
-                with urllib.request.urlopen(req, timeout=10) as resp:
-                    resp.read()
+                try:
+                    with urllib.request.urlopen(req, timeout=10) as resp:
+                        resp.read()
+                except urllib.error.HTTPError as e:
+                    # 403/404 от оффера — клик всё равно записался в Keitaro
+                    print(f'Fake click HTTP {e.code} (ok, click recorded)', flush=True)
                 self.send_response(200)
                 self.send_header('Content-Type', 'application/json')
                 self.send_header('Access-Control-Allow-Origin', '*')
