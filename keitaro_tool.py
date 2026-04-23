@@ -184,6 +184,7 @@ HTML = r"""<!DOCTYPE html>
         <tr>
           <th>ID Keitaro</th>
           <th>Название кампании</th>
+          <th>Объявление (sub1)</th>
           <th style="text-align:center">Комиссия</th>
           <th style="text-align:center">Строк</th>
           <th style="text-align:right">Спенд USD</th>
@@ -244,8 +245,8 @@ async function testAndNext() {
     keitaroCampaigns = {};
     // Keitaro использует alias как идентификатор (не числовой id)
     campaigns.forEach(c => {
-      if (c.alias) keitaroCampaigns[c.alias] = { name: c.name, numId: c.id };
-      keitaroCampaigns[String(c.id)] = { name: c.name, numId: c.id };
+      if (c.alias) keitaroCampaigns[c.alias] = { name: c.name, numId: c.id, token: c.token || '' };
+      keitaroCampaigns[String(c.id)] = { name: c.name, numId: c.id, token: c.token || '' };
     });
     btn.textContent = `✅ Готово — ${campaigns.length} кампаний →`;
     setTimeout(() => goStep(2), 700);
@@ -305,7 +306,8 @@ function parseCSV(text) {
   // Поддержка двух форматов:
   // Формат 1 (стандартный): "Название кампании" + "Потраченная сумма (USD)"
   // Формат 2 (по аккаунтам): "Кампания" + "Расход"
-  const ni = hdr.findIndex(h => /название|campaign.?name|^кампани/i.test(h));
+  const ni = hdr.findIndex(h => /название.?кампани|campaign.?name|^кампани/i.test(h));
+  const ai = hdr.findIndex(h => /название.?объявл|ad.?name/i.test(h)); // колонка с названием объявления
   const si = hdr.findIndex(h => /потраченн|spend|amount.?spent|^расход$/i.test(h));
   const di = hdr.findIndex(h => /начал|start|reporting.?starts/i.test(h));
   const ci = hdr.findIndex(h => /валют|currency/i.test(h));
@@ -344,7 +346,8 @@ function parseCSV(text) {
     const spend = parseFloat(spendRaw) || 0;
     const date = di >= 0 ? (row[di]||'').replace(/"/g,'').trim() : '';
     const currency = ci >= 0 ? (row[ci]||'USD').replace(/"/g,'').trim().toUpperCase() : 'USD';
-    rows.push({ id, spend, date, currency, commission });
+    const adName = ai >= 0 ? (row[ai]||'').replace(/^"|"$/g,'').trim() : '';
+    rows.push({ id, spend, date, currency, commission, adName });
   }
   if (!rows.length) throw new Error('Нет строк с распознанным форматом ID');
   return rows;
@@ -372,15 +375,20 @@ async function processFile() {
   pt.textContent = 'Загружаем курсы валют...';
   const rates = await getExchangeRates();
 
+  // Определяем есть ли колонка с объявлениями
+  const hasAdNames = csvData.some(r => r.adName);
+
   // Группируем с конвертацией в USD
   const groups = {};
   for (const row of csvData) {
     const spendUSD = convertToUSD(row.spend, row.currency || 'USD', rates);
     const commission = row.commission || 0;
     const spendWithComm = spendUSD * (1 + commission / 100);
-    if (!groups[row.id]) groups[row.id] = { spend: 0, count: 0, commission };
-    groups[row.id].spend += spendWithComm;
-    groups[row.id].count++;
+    // Если есть названия объявлений — группируем по alias+adName
+    const key = hasAdNames && row.adName ? row.id + '|||' + row.adName : row.id;
+    if (!groups[key]) groups[key] = { id: row.id, adName: row.adName || '', spend: 0, count: 0, commission };
+    groups[key].spend += spendWithComm;
+    groups[key].count++;
   }
 
   const ids = Object.keys(groups);
@@ -392,14 +400,19 @@ async function processFile() {
   }
   pt.textContent='✅ Готово!'; pf.style.width='100%';
 
-  const results = ids.map(id => ({
-    id,
-    name: keitaroCampaigns[id] ? keitaroCampaigns[id].name : null,
-    keitaroId: keitaroCampaigns[id] ? keitaroCampaigns[id].numId : null,
-    spend: groups[id].spend,
-    count: groups[id].count,
-    commission: groups[id].commission || 0
-  })).sort((a,b)=>b.spend-a.spend);
+  const results = Object.keys(groups).map(key => {
+    const g = groups[key];
+    return {
+      id: g.id,
+      adName: g.adName,
+      name: keitaroCampaigns[g.id] ? keitaroCampaigns[g.id].name : null,
+      keitaroId: keitaroCampaigns[g.id] ? keitaroCampaigns[g.id].numId : null,
+      token: keitaroCampaigns[g.id] ? keitaroCampaigns[g.id].token : null,
+      spend: g.spend,
+      count: g.count,
+      commission: g.commission || 0
+    };
+  }).sort((a,b)=>b.spend-a.spend);
   lastResults = results;
 
   renderResults(results);
@@ -422,6 +435,7 @@ function renderResults(results) {
     <tr>
       <td class="td-id">${esc(r.id)}</td>
       <td class="td-name ${r.name?'':'unknown'}">${r.name?esc(r.name):'Не найдено в Keitaro'}${!r.name?'<span class="badge-error">?</span>':''}</td>
+      <td class="td-name" style="font-size:.68rem;color:var(--muted)">${r.adName ? esc(r.adName) : '—'}</td>
       <td class="td-count">${r.commission ? '+'+r.commission+'%' : '—'}</td>
       <td class="td-count">${r.count}</td>
       <td class="td-spend">$${r.spend.toFixed(2)}</td>
@@ -509,9 +523,11 @@ async function sendToKeitaro() {
       cost: r.spend.toFixed(2),
       currency: 'USD'
     };
+    // Добавляем sub_id_1 если есть название объявления
+    if (r.adName) payload.sub_id_1 = r.adName;
 
     try {
-      const resp = await fetch('/proxy/update_costs', {
+      let resp = await fetch('/proxy/update_costs', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
@@ -521,12 +537,39 @@ async function sendToKeitaro() {
           payload
         })
       });
-      const data = await resp.json().catch(() => ({}));
+      let data = await resp.json().catch(() => ({}));
+
+      // Если кликов не найдено и есть adName и токен — создаём фейковый клик и повторяем
+      if (resp.ok && r.adName && r.token && (data.updated === 0 || data.clicks_updated === 0 || data.count === 0)) {
+        statusEl.innerHTML += `<div class="row-skip">⚡ ${esc(r.name)} [${esc(r.adName)}] — кликов нет, создаём фейковый клик...</div>`;
+        try {
+          const clickUrl = apiUrl + '/' + r.token + '?sub_id_1=' + encodeURIComponent(r.adName);
+          await fetch('/proxy/fake_click?url=' + encodeURIComponent(clickUrl));
+          await new Promise(res => setTimeout(res, 1500)); // ждём пока клик запишется
+          // Повторяем update_costs
+          resp = await fetch('/proxy/update_costs', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({
+              url: apiUrl,
+              apikey: apiKeyVal,
+              campaign_id: r.keitaroId,
+              payload
+            })
+          });
+          data = await resp.json().catch(() => ({}));
+        } catch(e) {
+          // ignore fake click errors
+        }
+      }
+
       if (resp.ok) {
-        statusEl.innerHTML += `<div class="row-ok">✅ ${esc(r.name)} — $${r.spend.toFixed(2)} отправлено</div>`;
+        const label = r.adName ? `${esc(r.name)} [${esc(r.adName)}]` : esc(r.name);
+        statusEl.innerHTML += `<div class="row-ok">✅ ${label} — $${r.spend.toFixed(2)} отправлено</div>`;
         okCount++;
       } else {
-        statusEl.innerHTML += `<div class="row-err">❌ ${esc(r.name)} — ${esc(data.error || 'ошибка HTTP '+resp.status)}</div>`;
+        const label = r.adName ? `${esc(r.name)} [${esc(r.adName)}]` : esc(r.name);
+        statusEl.innerHTML += `<div class="row-err">❌ ${label} — ${esc(data.error || 'ошибка HTTP '+resp.status)}</div>`;
         errCount++;
       }
     } catch(e) {
@@ -648,6 +691,28 @@ class Handler(http.server.BaseHTTPRequestHandler):
                     self._json_error(e.code, f'Keitaro: HTTP {e.code} — {err_body[:200]}')
                 except urllib.error.URLError as e:
                     self._json_error(502, f'Не удалось подключиться: {e.reason}')
+            except Exception as e:
+                self._json_error(500, str(e))
+            return
+
+        if parsed.path == '/proxy/fake_click':
+            params = parse_qs(parsed.query)
+            click_url = params.get('url', [''])[0]
+            if not click_url:
+                self._json_error(400, 'Не указан url')
+                return
+            try:
+                req = urllib.request.Request(
+                    click_url,
+                    headers={'User-Agent': 'Mozilla/5.0 (iPhone; CPU iPhone OS 17_0 like Mac OS X) AppleWebKit/605.1.15'}
+                )
+                with urllib.request.urlopen(req, timeout=10) as resp:
+                    resp.read()
+                self.send_response(200)
+                self.send_header('Content-Type', 'application/json')
+                self.send_header('Access-Control-Allow-Origin', '*')
+                self.end_headers()
+                self.wfile.write(b'{"ok":true}')
             except Exception as e:
                 self._json_error(500, str(e))
             return
