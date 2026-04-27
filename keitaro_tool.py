@@ -344,6 +344,12 @@ function parseCSV(text) {
       if (m) { id = m[1]; commission = parseFloat(m[2]) || 0; }
     }
 
+    // Формат 3: K8qKfX1x_K1_... (нет слеша, нет пайпа — alias первые 8 символов до _)
+    if (!id) {
+      const m = rawName.match(/^([A-Za-z0-9]{8})[_]/);
+      if (m) { id = m[1]; }
+    }
+
     if (!id) continue;
 
     const spendRaw = (row[si]||'0').replace(/[^0-9.,]/g,'').replace(',','.');
