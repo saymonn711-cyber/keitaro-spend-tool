@@ -161,6 +161,10 @@ HTML = r"""<!DOCTYPE html>
       <label>Дата отчёта</label>
       <input type="date" id="reportDate" style="width:100%;background:var(--surface);border:1px solid var(--border);border-radius:8px;padding:11px 14px;color:var(--text);font-family:'JetBrains Mono',monospace;font-size:.8rem;margin-bottom:0">
     </div>
+    <div style="margin-bottom:16px">
+      <label>Комиссия % (вручную — перезапишет комиссию из названия кампании)</label>
+      <input type="number" id="manualCommission" min="0" max="100" step="0.1" placeholder="Например: 5 (оставь пустым чтобы брать из названия)" style="width:100%;background:var(--surface);border:1px solid var(--border);border-radius:8px;padding:11px 14px;color:var(--text);font-family:'JetBrains Mono',monospace;font-size:.8rem;margin-bottom:0">
+    </div>
     <div class="progress-wrap" id="progressWrap">
       <div class="progress-info">
         <span id="progressText">Обрабатываем...</span>
@@ -303,13 +307,13 @@ function parseCSV(text) {
   const sep = lines[0].includes(';') ? ';' : ',';
   const hdr = splitLine(lines[0], sep).map(h => h.replace(/"/g,'').trim());
 
-  // Поддержка двух форматов:
-  // Формат 1 (стандартный): "Название кампании" + "Потраченная сумма (USD)"
-  // Формат 2 (по аккаунтам): "Кампания" + "Расход"
-  const ni = hdr.findIndex(h => /название.?кампани|campaign.?name|^кампани/i.test(h));
-  const ai = hdr.findIndex(h => /название.?объявл|ad.?name/i.test(h)); // колонка с названием объявления
-  const si = hdr.findIndex(h => /потраченн|spend|amount.?spent|^расход$/i.test(h));
-  const di = hdr.findIndex(h => /начал|start|reporting.?starts/i.test(h));
+  // Поддержка форматов: RU, UA, EN
+  // Название кампании / Назва кампанії / Campaign name
+  // Потраченная сумма / Витрачена сума / Amount spent
+  const ni = hdr.findIndex(h => /назв.{0,10}кампан|campaign.?name|^кампани/i.test(h));
+  const ai = hdr.findIndex(h => /назв.{0,10}об.яв|ad.?name/i.test(h));
+  const si = hdr.findIndex(h => /потраченн|витрачен|spend|amount.?spent|^расход$/i.test(h));
+  const di = hdr.findIndex(h => /начал|початок|start|reporting.?starts/i.test(h));
   const ci = hdr.findIndex(h => /валют|currency/i.test(h));
 
   if (ni===-1) throw new Error('Не найдена колонка с названием. Колонки: ' + hdr.join(', '));
@@ -379,7 +383,8 @@ async function processFile() {
   const groups = {};
   for (const row of csvData) {
     const spendUSD = convertToUSD(row.spend, row.currency || 'USD', rates);
-    const commission = row.commission || 0;
+    const manualComm = parseFloat(document.getElementById('manualCommission').value);
+    const commission = !isNaN(manualComm) && manualComm > 0 ? manualComm : (row.commission || 0);
     const spendWithComm = spendUSD * (1 + commission / 100);
     if (!groups[row.id]) groups[row.id] = { id: row.id, spend: 0, count: 0, commission };
     groups[row.id].spend += spendWithComm;
